@@ -121,9 +121,39 @@
     canvas.width = Math.floor(window.innerWidth * DPR);
     canvas.height = Math.floor(window.innerHeight * DPR);
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    initStars();
   }
   window.addEventListener('resize', resize);
   resize();
+
+  // Starfield system
+  const stars = [];
+  const starLayers = 3;
+  function initStars() {
+    stars.length = 0;
+    const w = window.innerWidth, h = window.innerHeight;
+    for (let layer = 0; layer < starLayers; layer++) {
+      const count = 60 + layer * 40;
+      for (let i = 0; i < count; i++) {
+        stars.push({
+          x: Math.random() * w,
+          y: Math.random() * h,
+          size: 0.5 + Math.random() * (1.5 + layer * 0.5),
+          speed: 15 + layer * 25,
+          brightness: 0.3 + Math.random() * 0.7,
+          twinkle: Math.random() * Math.PI * 2,
+          layer
+        });
+      }
+    }
+  }
+
+  // Trail system for player
+  const playerTrail = [];
+  const maxTrailLength = 12;
+
+  // Bullet trail system
+  const bulletTrails = new Map();
 
   // UI
   const bossmask = document.getElementById('bossmask');
@@ -926,160 +956,727 @@
     const s = game.shake; game.cam.shakeX = rand(-s,s); game.cam.shakeY = rand(-s,s); game.cam.zoom = game.zoom;
   }
 
-  function draw() {
-    const w=W(), h=H();
-    // Background
+  // Enhanced draw functions
+  function drawStarfield(dt) {
+    const w = W(), h = H();
     const section = game.section;
-    const bgPulse = Math.min(1, (game.beatPulse*0.85 + game.barPulse*0.7 + game.dropPulse*1.0));
-    const baseA = section.startsWith('drop') ? '#200006' : '#07081a';
-    ctx.fillStyle = baseA; ctx.fillRect(0,0,w,h);
+    const inDrop = section.startsWith('drop');
 
-    // Strobe gradient
-    const grad = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, Math.max(w,h)*0.8);
-    grad.addColorStop(0, hexToRgba('#ffffff', 0.0));
-    grad.addColorStop(0.45, hexToRgba(section.startsWith('drop') ? '#ff6' : '#6ef', 0.05*bgPulse));
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.fillStyle = grad; ctx.fillRect(0,0,w,h);
-    ctx.globalCompositeOperation = 'source-over';
-
-    // Camera transform
-    ctx.save();
-    const z = 1 + Math.min(0.17, (game.cam.zoom-1));
-    const cx = w/2 + game.cam.shakeX, cy = h/2 + game.cam.shakeY;
-    ctx.translate(cx, cy); ctx.scale(z, z); ctx.translate(-cx, -cy);
-
-    // Arena grid
-    const gridAlpha = section.startsWith('drop') ? 0.1 : 0.06;
-    ctx.globalAlpha = gridAlpha + bgPulse*0.05;
-    ctx.strokeStyle = hexToRgba('#77f', 0.12); ctx.lineWidth = 1;
-    const cell = 44;
-    ctx.beginPath();
-    for (let x = (cx%cell)-w; x< w+cell; x+=cell) { ctx.moveTo(x, 0); ctx.lineTo(x, h); }
-    for (let y = (cy%cell)-h; y< h+cell; y+=cell) { ctx.moveTo(0, y); ctx.lineTo(w, y); }
-    ctx.stroke(); ctx.globalAlpha = 1;
-
-    // Boss
-    const b = game.boss; if (b && b.alive) {
-      drawGlowCircle(b.x, b.y, b.r*1.8, section.startsWith('drop') ? colors.red : colors.blue, 0.6);
-      ctx.fillStyle = section.startsWith('drop') ? '#fb2a50' : '#2ac7ff';
-      ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, TAU); ctx.fill();
-      // Crown spikes
-      const spikes = 20; const R1 = b.r + 10 + Math.sin(game.time*6)*1.5; const R2 = R1 + 9 + Math.sin(game.time*4)*3;
-      ctx.strokeStyle = section.startsWith('drop') ? '#ffb000' : '#aaf'; ctx.lineWidth = 2;
-      ctx.beginPath();
-      for (let i=0;i<spikes;i++){
-        const a = b.angle + i*(TAU/spikes);
-        const x1 = b.x + Math.cos(a)*R1, y1 = b.y + Math.sin(a)*R1;
-        const x2 = b.x + Math.cos(a)*R2, y2 = b.y + Math.sin(a)*R2;
-        ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+    for (const star of stars) {
+      // Move stars
+      star.y += star.speed * dt * (1 + game.beatPulse * 2);
+      if (star.y > h + 10) {
+        star.y = -10;
+        star.x = Math.random() * w;
       }
+
+      // Twinkle effect
+      star.twinkle += dt * (2 + star.layer);
+      const twinkle = 0.5 + 0.5 * Math.sin(star.twinkle);
+      const alpha = star.brightness * twinkle * (inDrop ? 0.8 : 1);
+
+      // Color based on section
+      const starColor = inDrop
+        ? `rgba(255, ${150 + Math.floor(star.brightness * 100)}, ${100 + Math.floor(star.brightness * 50)}, ${alpha})`
+        : `rgba(${150 + Math.floor(star.brightness * 100)}, ${200 + Math.floor(star.brightness * 55)}, 255, ${alpha})`;
+
+      ctx.fillStyle = starColor;
+      ctx.beginPath();
+      ctx.arc(star.x, star.y, star.size, 0, TAU);
+      ctx.fill();
+
+      // Add glow to brighter stars
+      if (star.brightness > 0.7) {
+        const glowSize = star.size * 3;
+        const glow = ctx.createRadialGradient(star.x, star.y, 0, star.x, star.y, glowSize);
+        glow.addColorStop(0, `rgba(255, 255, 255, ${alpha * 0.3})`);
+        glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, glowSize, 0, TAU);
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawNebula(w, h, section, bgPulse) {
+    const inDrop = section.startsWith('drop');
+    const time = game.time;
+
+    // Create flowing nebula clouds
+    for (let i = 0; i < 3; i++) {
+      const x = w * (0.2 + i * 0.3) + Math.sin(time * 0.3 + i) * 100;
+      const y = h * (0.3 + Math.cos(time * 0.2 + i * 2) * 0.2);
+      const size = 200 + Math.sin(time * 0.5 + i) * 50 + bgPulse * 100;
+
+      const nebGrad = ctx.createRadialGradient(x, y, 0, x, y, size);
+      if (inDrop) {
+        nebGrad.addColorStop(0, `rgba(255, 50, 100, ${0.08 + bgPulse * 0.05})`);
+        nebGrad.addColorStop(0.5, `rgba(200, 30, 80, ${0.04 + bgPulse * 0.03})`);
+        nebGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      } else {
+        nebGrad.addColorStop(0, `rgba(50, 100, 200, ${0.06 + bgPulse * 0.04})`);
+        nebGrad.addColorStop(0.5, `rgba(80, 50, 180, ${0.03 + bgPulse * 0.02})`);
+        nebGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      }
+      ctx.fillStyle = nebGrad;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  function drawEnhancedBoss(b, section, time) {
+    const inDrop = section.startsWith('drop');
+    const pulse = 1 + game.beatPulse * 0.15;
+    const healthRatio = b.hp / b.maxhp;
+
+    // Outer aura with multiple layers
+    for (let i = 3; i >= 0; i--) {
+      const auraR = b.r * (2 + i * 0.5) * pulse;
+      const auraGrad = ctx.createRadialGradient(b.x, b.y, b.r, b.x, b.y, auraR);
+      const auraColor = inDrop ? [255, 50, 100] : [50, 180, 255];
+      auraGrad.addColorStop(0, `rgba(${auraColor.join(',')}, ${0.15 - i * 0.03})`);
+      auraGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = auraGrad;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, auraR, 0, TAU);
+      ctx.fill();
+    }
+
+    // Rotating orbital rings
+    ctx.strokeStyle = inDrop ? 'rgba(255, 150, 50, 0.6)' : 'rgba(100, 200, 255, 0.6)';
+    ctx.lineWidth = 2;
+    for (let ring = 0; ring < 3; ring++) {
+      const ringR = b.r * (1.3 + ring * 0.3);
+      const ringAngle = b.angle * (1 + ring * 0.5) + ring * Math.PI / 3;
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(ringAngle);
+      ctx.scale(1, 0.3);
+      ctx.beginPath();
+      ctx.arc(0, 0, ringR, 0, TAU);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Orbiting energy orbs
+    const orbCount = 6;
+    for (let i = 0; i < orbCount; i++) {
+      const orbAngle = b.angle * 2 + (i / orbCount) * TAU;
+      const orbR = b.r * 1.4;
+      const orbX = b.x + Math.cos(orbAngle) * orbR;
+      const orbY = b.y + Math.sin(orbAngle) * orbR * 0.4;
+      const orbSize = 6 + Math.sin(time * 4 + i) * 2;
+
+      drawGlowCircle(orbX, orbY, orbSize * 2, inDrop ? '#ff6600' : '#00ccff', 0.5);
+      ctx.fillStyle = inDrop ? '#ffaa00' : '#66ddff';
+      ctx.beginPath();
+      ctx.arc(orbX, orbY, orbSize, 0, TAU);
+      ctx.fill();
+    }
+
+    // Main body with gradient
+    const bodyGrad = ctx.createRadialGradient(
+      b.x - b.r * 0.3, b.y - b.r * 0.3, 0,
+      b.x, b.y, b.r
+    );
+    if (inDrop) {
+      bodyGrad.addColorStop(0, '#ff6080');
+      bodyGrad.addColorStop(0.5, '#dd2050');
+      bodyGrad.addColorStop(1, '#881030');
+    } else {
+      bodyGrad.addColorStop(0, '#80ddff');
+      bodyGrad.addColorStop(0.5, '#40a0dd');
+      bodyGrad.addColorStop(1, '#205080');
+    }
+    ctx.fillStyle = bodyGrad;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r * pulse, 0, TAU);
+    ctx.fill();
+
+    // Inner core
+    const coreGrad = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r * 0.5);
+    coreGrad.addColorStop(0, inDrop ? 'rgba(255,255,200,0.9)' : 'rgba(200,255,255,0.9)');
+    coreGrad.addColorStop(0.5, inDrop ? 'rgba(255,150,100,0.5)' : 'rgba(100,200,255,0.5)');
+    coreGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = coreGrad;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r * 0.5, 0, TAU);
+    ctx.fill();
+
+    // Crown spikes (enhanced)
+    const spikes = 24;
+    const R1 = b.r + 12 + Math.sin(time * 6) * 3;
+    const R2 = R1 + 15 + Math.sin(time * 4) * 5 + game.beatPulse * 10;
+
+    ctx.lineCap = 'round';
+    for (let i = 0; i < spikes; i++) {
+      const a = b.angle + i * (TAU / spikes);
+      const x1 = b.x + Math.cos(a) * R1;
+      const y1 = b.y + Math.sin(a) * R1;
+      const x2 = b.x + Math.cos(a) * R2;
+      const y2 = b.y + Math.sin(a) * R2;
+
+      const spikeGrad = ctx.createLinearGradient(x1, y1, x2, y2);
+      if (inDrop) {
+        spikeGrad.addColorStop(0, 'rgba(255, 200, 50, 0.8)');
+        spikeGrad.addColorStop(1, 'rgba(255, 100, 50, 0.2)');
+      } else {
+        spikeGrad.addColorStop(0, 'rgba(150, 200, 255, 0.8)');
+        spikeGrad.addColorStop(1, 'rgba(100, 150, 255, 0.2)');
+      }
+      ctx.strokeStyle = spikeGrad;
+      ctx.lineWidth = 3 - (i % 2);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
       ctx.stroke();
     }
 
-    // Player
+    // Health-based rage effect
+    if (healthRatio < 0.5) {
+      const rageIntensity = 1 - healthRatio * 2;
+      ctx.strokeStyle = `rgba(255, 0, 50, ${0.3 + rageIntensity * 0.4 + Math.sin(time * 20) * 0.2})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r + 5 + Math.sin(time * 15) * 3, 0, TAU);
+      ctx.stroke();
+    }
+  }
+
+  function drawEnhancedPlayer(p, section, time) {
+    const invA = p.inv > 0 ? (0.5 + 0.5 * Math.sin(time * 30)) : 1;
+    const inDrop = section.startsWith('drop');
+
+    // Draw trail
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < playerTrail.length; i++) {
+      const t = playerTrail[i];
+      const alpha = (i / playerTrail.length) * 0.5 * invA;
+      const size = p.r * (0.3 + (i / playerTrail.length) * 0.7);
+      const trailGrad = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, size * 2);
+      trailGrad.addColorStop(0, `rgba(0, 255, 255, ${alpha})`);
+      trailGrad.addColorStop(1, 'rgba(0, 255, 255, 0)');
+      ctx.fillStyle = trailGrad;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, size * 2, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Outer glow
+    const glowSize = p.r * 3 * (1 + game.beatPulse * 0.3);
+    const glowGrad = ctx.createRadialGradient(p.x, p.y, p.r * 0.5, p.x, p.y, glowSize);
+    glowGrad.addColorStop(0, `rgba(0, 255, 255, ${0.4 * invA})`);
+    glowGrad.addColorStop(0.5, `rgba(0, 200, 255, ${0.15 * invA})`);
+    glowGrad.addColorStop(1, 'rgba(0, 100, 200, 0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, glowSize, 0, TAU);
+    ctx.fill();
+
+    // Ship body with gradient
+    const bodyGrad = ctx.createRadialGradient(
+      p.x - p.r * 0.3, p.y - p.r * 0.3, 0,
+      p.x, p.y, p.r
+    );
+    bodyGrad.addColorStop(0, p.inv > 0 ? '#ffffff' : '#aaffff');
+    bodyGrad.addColorStop(0.6, p.inv > 0 ? '#88ccff' : '#00ddff');
+    bodyGrad.addColorStop(1, p.inv > 0 ? '#4488cc' : '#0088aa');
+    ctx.fillStyle = bodyGrad;
+    ctx.globalAlpha = invA;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Inner core
+    const coreGrad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r * 0.6);
+    coreGrad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+    coreGrad.addColorStop(0.5, 'rgba(150, 255, 255, 0.4)');
+    coreGrad.addColorStop(1, 'rgba(0, 200, 255, 0)');
+    ctx.fillStyle = coreGrad;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * 0.6, 0, TAU);
+    ctx.fill();
+
+    // Hitbox indicator
+    ctx.fillStyle = '#001122';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2.5, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, TAU);
+    ctx.stroke();
+
+    // Shield ring (enhanced)
+    if (p.shield > 0) {
+      const shieldPulse = 1 + Math.sin(time * 8) * 0.1;
+      for (let i = 0; i < p.shield; i++) {
+        const shieldR = p.r + 8 + i * 6;
+        const shieldGrad = ctx.createRadialGradient(p.x, p.y, shieldR - 3, p.x, p.y, shieldR + 3);
+        shieldGrad.addColorStop(0, 'rgba(100, 255, 255, 0)');
+        shieldGrad.addColorStop(0.5, `rgba(150, 255, 255, ${0.6 - i * 0.2})`);
+        shieldGrad.addColorStop(1, 'rgba(100, 255, 255, 0)');
+        ctx.strokeStyle = shieldGrad;
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, shieldR * shieldPulse, 0, TAU);
+        ctx.stroke();
+      }
+    }
+
+    // Hyper mode effect
+    if (game.hyperTime > 0) {
+      const hyperPulse = 0.5 + Math.sin(time * 20) * 0.5;
+      ctx.strokeStyle = `rgba(0, 255, 200, ${hyperPulse})`;
+      ctx.lineWidth = 3;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r + 15 + Math.sin(time * 10) * 3, 0, TAU);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Aim line (enhanced)
+    const ang = Math.atan2(mouse.y - p.y, mouse.x - p.x);
+    const aimGrad = ctx.createLinearGradient(p.x, p.y, p.x + Math.cos(ang) * 60, p.y + Math.sin(ang) * 60);
+    aimGrad.addColorStop(0, 'rgba(150, 255, 255, 0.5)');
+    aimGrad.addColorStop(1, 'rgba(150, 255, 255, 0)');
+    ctx.strokeStyle = aimGrad;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(p.x + Math.cos(ang) * p.r, p.y + Math.sin(ang) * p.r);
+    ctx.lineTo(p.x + Math.cos(ang) * 60, p.y + Math.sin(ang) * 60);
+    ctx.stroke();
+  }
+
+  function drawEnhancedBullet(bl, isPlayerBullet = false) {
+    const size = bl.r;
+
+    // Draw trail for this bullet
+    if (!bl._id) bl._id = Math.random();
+    if (!bulletTrails.has(bl._id)) bulletTrails.set(bl._id, []);
+    const trail = bulletTrails.get(bl._id);
+    trail.push({ x: bl.x, y: bl.y });
+    if (trail.length > 6) trail.shift();
+
+    // Trail
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < trail.length - 1; i++) {
+      const t = trail[i];
+      const alpha = (i / trail.length) * 0.4;
+      const trailSize = size * (0.3 + (i / trail.length) * 0.5);
+      ctx.fillStyle = hexToRgba(bl.color, alpha);
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, trailSize, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Glow
+    const glowGrad = ctx.createRadialGradient(bl.x, bl.y, 0, bl.x, bl.y, size * 3);
+    glowGrad.addColorStop(0, hexToRgba(bl.color, 0.5));
+    glowGrad.addColorStop(0.5, hexToRgba(bl.color, 0.15));
+    glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(bl.x, bl.y, size * 3, 0, TAU);
+    ctx.fill();
+
+    // Core with gradient
+    const coreGrad = ctx.createRadialGradient(
+      bl.x - size * 0.2, bl.y - size * 0.2, 0,
+      bl.x, bl.y, size
+    );
+    coreGrad.addColorStop(0, '#ffffff');
+    coreGrad.addColorStop(0.4, bl.color);
+    coreGrad.addColorStop(1, hexToRgba(bl.color, 0.8));
+    ctx.fillStyle = coreGrad;
+    ctx.beginPath();
+    ctx.arc(bl.x, bl.y, size, 0, TAU);
+    ctx.fill();
+  }
+
+  function drawEnhancedLaser(L, time) {
+    const t = time - L.t0;
+    const warm = clamp(1 - (L.warmup - t) / L.warmup, 0, 1);
+    const isActive = t > L.warmup;
+
+    // Telegraph with pulsing
+    const telegraphAlpha = 0.1 + 0.4 * warm + Math.sin(time * 20) * 0.1 * warm;
+    ctx.strokeStyle = hexToRgba('#ffffff', telegraphAlpha);
+    ctx.lineWidth = 2 + warm * 2;
+    ctx.setLineDash([10, 10]);
+    ctx.beginPath();
+    ctx.moveTo(L.x1, L.y1);
+    ctx.lineTo(L.x2, L.y2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Warning particles along telegraph
+    if (warm > 0.3 && !isActive) {
+      const particleCount = Math.floor(warm * 10);
+      for (let i = 0; i < particleCount; i++) {
+        const progress = Math.random();
+        const px = L.x1 + (L.x2 - L.x1) * progress;
+        const py = L.y1 + (L.y2 - L.y1) * progress;
+        const offset = (Math.random() - 0.5) * 20 * warm;
+        const perpX = -(L.y2 - L.y1) / Math.hypot(L.x2 - L.x1, L.y2 - L.y1);
+        const perpY = (L.x2 - L.x1) / Math.hypot(L.x2 - L.x1, L.y2 - L.y1);
+
+        ctx.fillStyle = hexToRgba(L.color, 0.6);
+        ctx.beginPath();
+        ctx.arc(px + perpX * offset, py + perpY * offset, 2, 0, TAU);
+        ctx.fill();
+      }
+    }
+
+    // Active beam
+    if (isActive) {
+      const beamPulse = 0.8 + 0.3 * Math.sin(time * 40);
+      const width = L.width * beamPulse;
+
+      // Outer glow
+      ctx.strokeStyle = hexToRgba(L.color, 0.3);
+      ctx.lineWidth = width * 2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(L.x1, L.y1);
+      ctx.lineTo(L.x2, L.y2);
+      ctx.stroke();
+
+      // Main beam
+      ctx.strokeStyle = hexToRgba(L.color, 0.8);
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(L.x1, L.y1);
+      ctx.lineTo(L.x2, L.y2);
+      ctx.stroke();
+
+      // Core
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+      ctx.lineWidth = width * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(L.x1, L.y1);
+      ctx.lineTo(L.x2, L.y2);
+      ctx.stroke();
+
+      // Edge highlights
+      ctx.strokeStyle = hexToRgba('#ffffff', 0.4);
+      ctx.lineWidth = 1;
+      const perpX = -(L.y2 - L.y1) / Math.hypot(L.x2 - L.x1, L.y2 - L.y1) * width * 0.5;
+      const perpY = (L.x2 - L.x1) / Math.hypot(L.x2 - L.x1, L.y2 - L.y1) * width * 0.5;
+      ctx.beginPath();
+      ctx.moveTo(L.x1 + perpX, L.y1 + perpY);
+      ctx.lineTo(L.x2 + perpX, L.y2 + perpY);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(L.x1 - perpX, L.y1 - perpY);
+      ctx.lineTo(L.x2 - perpX, L.y2 - perpY);
+      ctx.stroke();
+    }
+  }
+
+  function drawEnhancedPowerup(pu, time) {
+    const pulse = 0.8 + 0.2 * Math.sin((time + pu.t) * 6);
+    const rotate = time * 2;
+
+    const colors = {
+      spread: { main: '#ffa500', glow: '#ffcc00' },
+      shield: { main: '#00ffff', glow: '#66ffff' },
+      heal: { main: '#22ff44', glow: '#88ff88' },
+      hyper: { main: '#ff2a55', glow: '#ff6688' }
+    };
+    const col = colors[pu.type] || colors.spread;
+
+    // Rotating outer ring
+    ctx.save();
+    ctx.translate(pu.x, pu.y);
+    ctx.rotate(rotate);
+    ctx.strokeStyle = hexToRgba(col.glow, 0.5);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * TAU;
+      const r = 18 + Math.sin(time * 4 + i) * 3;
+      if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+      else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+
+    // Glow
+    const glowGrad = ctx.createRadialGradient(pu.x, pu.y, 0, pu.x, pu.y, 25);
+    glowGrad.addColorStop(0, hexToRgba(col.glow, 0.4));
+    glowGrad.addColorStop(0.5, hexToRgba(col.main, 0.15));
+    glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(pu.x, pu.y, 25, 0, TAU);
+    ctx.fill();
+
+    // Main body
+    const bodyGrad = ctx.createRadialGradient(
+      pu.x - 3, pu.y - 3, 0,
+      pu.x, pu.y, 12 * pulse
+    );
+    bodyGrad.addColorStop(0, '#ffffff');
+    bodyGrad.addColorStop(0.4, col.glow);
+    bodyGrad.addColorStop(1, col.main);
+    ctx.fillStyle = bodyGrad;
+    ctx.beginPath();
+    ctx.arc(pu.x, pu.y, 12 * pulse, 0, TAU);
+    ctx.fill();
+
+    // Icon
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.font = 'bold 11px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const icon = { spread: '⬆', shield: '◯', heal: '+', hyper: '⚡' }[pu.type] || '?';
+    ctx.fillText(icon, pu.x, pu.y);
+  }
+
+  function drawEnhancedParticle(pr) {
+    const alpha = clamp(pr.life, 0, 1);
+    const size = pr.r * (0.5 + alpha * 0.5);
+
+    // Glow
+    const glowGrad = ctx.createRadialGradient(pr.x, pr.y, 0, pr.x, pr.y, size * 2);
+    glowGrad.addColorStop(0, hexToRgba(pr.color, alpha * 0.6));
+    glowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(pr.x, pr.y, size * 2, 0, TAU);
+    ctx.fill();
+
+    // Core
+    ctx.fillStyle = hexToRgba(pr.color, alpha);
+    ctx.beginPath();
+    ctx.arc(pr.x, pr.y, size, 0, TAU);
+    ctx.fill();
+  }
+
+  function drawEnhancedShockwave(sw) {
+    const progress = 1 - sw.life / 0.6;
+    const alpha = (1 - progress) * 0.8;
+
+    // Multiple rings
+    for (let i = 0; i < 3; i++) {
+      const ringR = sw.r * (0.7 + i * 0.15);
+      const ringAlpha = alpha * (1 - i * 0.3);
+
+      ctx.strokeStyle = hexToRgba(sw.color, ringAlpha);
+      ctx.lineWidth = 4 - i * 1.5;
+      ctx.beginPath();
+      ctx.arc(sw.x, sw.y, ringR, 0, TAU);
+      ctx.stroke();
+    }
+
+    // Inner glow
+    const innerGrad = ctx.createRadialGradient(sw.x, sw.y, sw.r * 0.5, sw.x, sw.y, sw.r);
+    innerGrad.addColorStop(0, hexToRgba(sw.color, alpha * 0.3));
+    innerGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = innerGrad;
+    ctx.beginPath();
+    ctx.arc(sw.x, sw.y, sw.r, 0, TAU);
+    ctx.fill();
+  }
+
+  function drawVignette(w, h, intensity = 0.4) {
+    const vigGrad = ctx.createRadialGradient(w/2, h/2, h * 0.3, w/2, h/2, h * 0.9);
+    vigGrad.addColorStop(0, 'rgba(0,0,0,0)');
+    vigGrad.addColorStop(1, `rgba(0,0,0,${intensity})`);
+    ctx.fillStyle = vigGrad;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  function drawScanlines(w, h, intensity) {
+    ctx.globalAlpha = intensity;
+    for (let y = 0; y < h; y += 3) {
+      ctx.fillStyle = 'rgba(0,0,0,0.15)';
+      ctx.fillRect(0, y, w, 1);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function draw() {
+    const w = W(), h = H();
+    const section = game.section;
+    const bgPulse = Math.min(1, (game.beatPulse * 0.85 + game.barPulse * 0.7 + game.dropPulse * 1.0));
+    const inDrop = section.startsWith('drop');
+    const dt = 1/60; // Approximate for star movement
+
+    // Deep space background
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
+    if (inDrop) {
+      bgGrad.addColorStop(0, '#0a0005');
+      bgGrad.addColorStop(0.5, '#150008');
+      bgGrad.addColorStop(1, '#0a0005');
+    } else {
+      bgGrad.addColorStop(0, '#020510');
+      bgGrad.addColorStop(0.5, '#05081a');
+      bgGrad.addColorStop(1, '#020510');
+    }
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Nebula clouds
+    drawNebula(w, h, section, bgPulse);
+
+    // Starfield
+    drawStarfield(dt);
+
+    // Beat-synced radial pulse
+    if (bgPulse > 0.01) {
+      const pulseGrad = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, Math.max(w, h) * 0.7);
+      pulseGrad.addColorStop(0, 'rgba(255,255,255,0)');
+      pulseGrad.addColorStop(0.3, hexToRgba(inDrop ? '#ff4400' : '#0088ff', 0.03 * bgPulse));
+      pulseGrad.addColorStop(0.6, hexToRgba(inDrop ? '#ff2200' : '#0066ff', 0.05 * bgPulse));
+      pulseGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = pulseGrad;
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // Camera transform
+    ctx.save();
+    const z = 1 + Math.min(0.12, (game.cam.zoom - 1));
+    const cx = w/2 + game.cam.shakeX, cy = h/2 + game.cam.shakeY;
+    ctx.translate(cx, cy);
+    ctx.scale(z, z);
+    ctx.translate(-cx, -cy);
+
+    // Enhanced grid
+    const gridAlpha = (inDrop ? 0.12 : 0.08) + bgPulse * 0.08;
+    const cell = 50;
+    const gridOffset = (game.time * 30) % cell;
+
+    ctx.globalAlpha = gridAlpha;
+    ctx.strokeStyle = inDrop ? 'rgba(255, 100, 150, 0.15)' : 'rgba(100, 150, 255, 0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = -cell + (cx % cell); x < w + cell; x += cell) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+    }
+    for (let y = -cell + gridOffset; y < h + cell; y += cell) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+    }
+    ctx.stroke();
+
+    // Grid intersections glow
+    ctx.fillStyle = inDrop ? 'rgba(255, 150, 100, 0.3)' : 'rgba(100, 200, 255, 0.3)';
+    for (let x = -cell + (cx % cell); x < w + cell; x += cell) {
+      for (let y = -cell + gridOffset; y < h + cell; y += cell) {
+        ctx.beginPath();
+        ctx.arc(x, y, 2, 0, TAU);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // Boss
+    const b = game.boss;
+    if (b && b.alive) {
+      drawEnhancedBoss(b, section, game.time);
+    }
+
+    // Player trail update
     const p = game.player;
     if (p) {
-      const invA = p.inv > 0 ? (0.5 + 0.5*Math.sin(game.time*30)) : 1;
-      drawGlowCircle(p.x, p.y, p.r*2.2, '#0ff', 0.55*invA);
-      ctx.fillStyle = p.inv>0 ? '#aef' : '#0ff';
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
-
-      // Hitbox dot (fairness)
-      ctx.fillStyle = '#003';
-      ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, TAU); ctx.fill();
-
-      // Shield ring
-      if (p.shield > 0) {
-        ctx.strokeStyle = hexToRgba('#9ff', 0.9);
-        ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.r+6 + 2*Math.sin(game.time*10), 0, TAU); ctx.stroke();
-      }
-
-      // Aim line
-      ctx.globalAlpha = 0.28; ctx.strokeStyle = '#9ff'; ctx.lineWidth = 2;
-      const ang = Math.atan2(mouse.y - p.y, mouse.x - p.x);
-      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + Math.cos(ang)*42, p.y + Math.sin(ang)*42); ctx.stroke();
-      ctx.globalAlpha = 1;
+      playerTrail.push({ x: p.x, y: p.y });
+      if (playerTrail.length > maxTrailLength) playerTrail.shift();
+      drawEnhancedPlayer(p, section, game.time);
     }
 
     // Enemy bullets
     for (const bl of game.bullets) {
       if (bl.updatePattern) continue;
-      drawGlowCircle(bl.x, bl.y, bl.r*2, bl.color, 0.4);
-      ctx.fillStyle = bl.color; ctx.beginPath(); ctx.arc(bl.x, bl.y, bl.r, 0, TAU); ctx.fill();
+      drawEnhancedBullet(bl);
+    }
+
+    // Clean up trails for removed bullets
+    const bulletIds = new Set(game.bullets.filter(b => b._id).map(b => b._id));
+    for (const id of bulletTrails.keys()) {
+      if (!bulletIds.has(id)) bulletTrails.delete(id);
     }
 
     // Lasers
     for (const L of game.lasers) {
-      const t = game.time - L.t0;
-      const warm = clamp(1 - (L.warmup - t)/L.warmup, 0, 1);
-      const active = t > L.warmup ? clamp((t - L.warmup)/L.active, 0, 1) : 0;
-      // Telegraph
-      ctx.strokeStyle = hexToRgba('#fff', 0.12 + 0.3*warm);
-      ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(L.x1, L.y1); ctx.lineTo(L.x2, L.y2); ctx.stroke();
-      // Active beam
-      if (active>0 || t > L.warmup) {
-        const width = L.width * (0.8 + 0.2*Math.sin(game.time*40));
-        ctx.strokeStyle = hexToRgba(L.color, 0.7);
-        ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(L.x1, L.y1); ctx.lineTo(L.x2, L.y2); ctx.stroke();
-        ctx.strokeStyle = hexToRgba('#fff', 0.22);
-        ctx.lineWidth = width*0.35; ctx.beginPath(); ctx.moveTo(L.x1, L.y1); ctx.lineTo(L.x2, L.y2); ctx.stroke();
-      }
+      drawEnhancedLaser(L, game.time);
     }
 
-    // Player bullets (additive)
+    // Player bullets
     ctx.globalCompositeOperation = 'lighter';
     for (const pb of game.pbullets) {
-      drawGlowCircle(pb.x, pb.y, pb.r*2, pb.color, 0.55);
-      ctx.fillStyle = pb.color; ctx.beginPath(); ctx.arc(pb.x, pb.y, pb.r, 0, TAU); ctx.fill();
+      drawEnhancedBullet(pb, true);
     }
     ctx.globalCompositeOperation = 'source-over';
 
     // Powerups
     for (const pu of game.powerups) {
-      const pulse = 0.7 + 0.3*Math.sin((game.time+pu.t)*6);
-      const col = pu.type==='spread'?'#ffa500': pu.type==='shield'?'#0ff': pu.type==='heal'?'#2f4':'#ff2a55';
-      drawGlowCircle(pu.x, pu.y, 18, col, 0.4);
-      ctx.fillStyle = hexToRgba(col, 0.85);
-      ctx.beginPath(); ctx.arc(pu.x, pu.y, 10 + 2*pulse, 0, TAU); ctx.fill();
-      ctx.fillStyle = '#000'; ctx.font = 'bold 12px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      const label = pu.type==='spread'?'S': pu.type==='shield'?'O': pu.type==='heal'?'H+':'H';
-      ctx.fillText(label, pu.x, pu.y);
+      drawEnhancedPowerup(pu, game.time);
     }
 
     // Particles
+    ctx.globalCompositeOperation = 'lighter';
     for (const pr of game.particles) {
-      ctx.fillStyle = hexToRgba(pr.color, clamp(pr.life, 0, 1));
-      ctx.beginPath(); ctx.arc(pr.x, pr.y, pr.r, 0, TAU); ctx.fill();
+      drawEnhancedParticle(pr);
     }
+    ctx.globalCompositeOperation = 'source-over';
 
     // Shockwaves
     for (const sw of game.shockwaves) {
-      const a = clamp(sw.life/0.6, 0, 1);
-      const g = ctx.createRadialGradient(sw.x, sw.y, sw.r*0.7, sw.x, sw.y, sw.r);
-      g.addColorStop(0, hexToRgba(sw.color, 0.0));
-      g.addColorStop(0.6, hexToRgba(sw.color, 0.18*a));
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sw.x, sw.y, sw.r, 0, TAU); ctx.fill();
+      drawEnhancedShockwave(sw);
     }
 
     ctx.restore();
 
-    // Flash on drops
-    const flash = Math.min(1, game.dropPulse*0.7);
-    if (flash > 0.01) { ctx.fillStyle = hexToRgba(section.startsWith('drop') ? '#ff7a00' : '#2af', 0.1*flash); ctx.fillRect(0,0,w,h); }
+    // Post-processing effects
+
+    // Drop flash
+    const flash = Math.min(1, game.dropPulse * 0.6);
+    if (flash > 0.01) {
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = hexToRgba(inDrop ? '#ff4400' : '#0066ff', 0.08 * flash);
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // Chromatic aberration on drops
+    if (inDrop && game.beatPulse > 0.3) {
+      ctx.globalAlpha = game.beatPulse * 0.15;
+      ctx.globalCompositeOperation = 'lighter';
+      // This is a simplified chromatic effect
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.02)';
+      ctx.fillRect(2, 0, w, h);
+      ctx.fillStyle = 'rgba(0, 0, 255, 0.02)';
+      ctx.fillRect(-2, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+    }
 
     // Scanlines
-    ctx.globalAlpha = 0.06 + 0.04*Math.min(1, game.beatPulse);
-    for (let y=0;y<h;y+=2){ ctx.fillStyle = 'rgba(255,255,255,0.02)'; ctx.fillRect(0,y,w,1); }
-    ctx.globalAlpha = 1;
+    const scanlineIntensity = 0.03 + 0.02 * Math.min(1, game.beatPulse);
+    drawScanlines(w, h, scanlineIntensity);
+
+    // Vignette
+    const vignetteIntensity = inDrop ? 0.5 : 0.35;
+    drawVignette(w, h, vignetteIntensity);
 
     // HUD pulsing
-    const hpPulse = Math.min(1, game.beatPulse*0.6 + game.barPulse*0.4);
-    bossmask.style.boxShadow = `0 0 12px rgba(0,255,255,${0.2+0.35*hpPulse}), 0 0 24px rgba(0,128,255,${0.2+0.35*hpPulse}) inset`;
-    hypermask.style.boxShadow = `0 0 12px rgba(255,170,0,${0.15+0.4*hpPulse}), 0 0 24px rgba(255,50,80,${0.12+0.3*hpPulse}) inset`;
-    playermask.style.boxShadow = `0 0 12px rgba(0,255,64,${0.2+0.4*hpPulse}), 0 0 24px rgba(0,200,64,${0.18+0.3*hpPulse}) inset`;
+    const hpPulse = Math.min(1, game.beatPulse * 0.6 + game.barPulse * 0.4);
+    bossmask.style.boxShadow = `0 0 ${12 + hpPulse * 8}px rgba(0,255,255,${0.2 + 0.35 * hpPulse}), 0 0 24px rgba(0,128,255,${0.2 + 0.35 * hpPulse}) inset`;
+    hypermask.style.boxShadow = `0 0 ${12 + hpPulse * 8}px rgba(255,170,0,${0.15 + 0.4 * hpPulse}), 0 0 24px rgba(255,50,80,${0.12 + 0.3 * hpPulse}) inset`;
+    playermask.style.boxShadow = `0 0 ${12 + hpPulse * 8}px rgba(0,255,64,${0.2 + 0.4 * hpPulse}), 0 0 24px rgba(0,200,64,${0.18 + 0.3 * hpPulse}) inset`;
   }
 
   function tick(ts) {
